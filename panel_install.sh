@@ -4,7 +4,7 @@ set -e
 export LANG=en_US.UTF-8
 export LC_ALL=C
 
-REPO_URL="https://github.com/xiaoxinmm/flux-panel-community.git"
+REPO_URL="https://github.com/Lochinemak/flux-panel-community.git"
 INSTALL_DIR="flux-panel-community"
 
 COUNTRY=$(curl -s https://ipinfo.io/country)

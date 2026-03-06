@@ -459,20 +459,17 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         String[] remoteAddresses = forward.getRemoteAddr().split(",");
         // 6. 根据隧道类型执行不同的诊断策略
         if (tunnel.getType() == TUNNEL_TYPE_PORT_FORWARD) {
-            // 端口转发：入口节点直接TCP ping目标地址
+            // 端口转发：入口节点直接诊断目标地址
             for (String remoteAddress : remoteAddresses) {
-                // 提取IP和端口
                 String targetIp = extractIpFromAddress(remoteAddress);
                 int targetPort = extractPortFromAddress(remoteAddress);
                 if (targetIp == null || targetPort == -1) {
                     return R.err("无法解析目标地址: " + remoteAddress);
                 }
-
-                DiagnosisResult result = performTcpPingDiagnosis(inNode, targetIp, targetPort, "转发->目标");
-                results.add(result);
+                appendTargetDiagnosisResults(results, inNode, targetIp, targetPort, "转发->目标");
             }
         } else {
-            // 隧道转发：入口TCP ping出口，出口TCP ping目标
+            // 隧道转发：入口TCP ping出口，出口节点诊断目标
             Node outNode = nodeService.getNodeById(tunnel.getOutNodeId());
             if (outNode == null) {
                 return R.err("出口节点不存在");
@@ -482,16 +479,14 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
             DiagnosisResult inToOutResult = performTcpPingDiagnosis(inNode, outNode.getServerIp(), forward.getOutPort(), "入口->出口");
             results.add(inToOutResult);
 
-            // 出口TCP ping目标
+            // 出口节点诊断目标
             for (String remoteAddress : remoteAddresses) {
-                // 提取IP和端口
                 String targetIp = extractIpFromAddress(remoteAddress);
                 int targetPort = extractPortFromAddress(remoteAddress);
                 if (targetIp == null || targetPort == -1) {
                     return R.err("无法解析目标地址: " + remoteAddress);
                 }
-                DiagnosisResult outToTargetResult = performTcpPingDiagnosis(outNode, targetIp, targetPort, "出口->目标");
-                results.add(outToTargetResult);
+                appendTargetDiagnosisResults(results, outNode, targetIp, targetPort, "出口->目标");
             }
 
         }
@@ -638,6 +633,14 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     }
 
     /**
+     * 转发规则入口同时监听 TCP/UDP，两种探测结果都输出，避免 UDP 目标被 TCP 误判。
+     */
+    private void appendTargetDiagnosisResults(List<DiagnosisResult> results, Node node, String targetIp, int targetPort, String description) {
+        results.add(performTcpPingDiagnosis(node, targetIp, targetPort, description + " (TCP)"));
+        results.add(performUdpPingDiagnosis(node, targetIp, targetPort, description + " (UDP)"));
+    }
+
+    /**
      * 执行TCP ping诊断
      *
      * @param node        执行TCP ping的节点
@@ -648,77 +651,115 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
      */
     private DiagnosisResult performTcpPingDiagnosis(Node node, String targetIp, int port, String description) {
         try {
-            // 构建TCP ping请求数据
             JSONObject tcpPingData = new JSONObject();
             tcpPingData.put("ip", targetIp);
             tcpPingData.put("port", port);
             tcpPingData.put("count", 2);
-            tcpPingData.put("timeout", 3000); // 5秒超时
+            tcpPingData.put("timeout", 3000);
 
-            // 发送TCP ping命令到节点
             GostDto gostResult = WebSocketServer.send_msg(node.getId(), tcpPingData, "TcpPing");
-
-            DiagnosisResult result = new DiagnosisResult();
-            result.setNodeId(node.getId());
-            result.setNodeName(node.getName());
-            result.setTargetIp(targetIp);
-            result.setTargetPort(port);
-            result.setDescription(description);
-            result.setTimestamp(System.currentTimeMillis());
-
-            if (gostResult != null && "OK".equals(gostResult.getMsg())) {
-                // 尝试解析TCP ping响应数据
-                try {
-                    if (gostResult.getData() != null) {
-                        JSONObject tcpPingResponse = (JSONObject) gostResult.getData();
-                        boolean success = tcpPingResponse.getBooleanValue("success");
-
-                        result.setSuccess(success);
-                        if (success) {
-                            result.setMessage("TCP连接成功");
-                            result.setAverageTime(tcpPingResponse.getDoubleValue("averageTime"));
-                            result.setPacketLoss(tcpPingResponse.getDoubleValue("packetLoss"));
-                        } else {
-                            result.setMessage(tcpPingResponse.getString("errorMessage"));
-                            result.setAverageTime(-1.0);
-                            result.setPacketLoss(100.0);
-                        }
-                    } else {
-                        // 没有详细数据，使用默认值
-                        result.setSuccess(true);
-                        result.setMessage("TCP连接成功");
-                        result.setAverageTime(0.0);
-                        result.setPacketLoss(0.0);
-                    }
-                } catch (Exception e) {
-                    // 解析响应数据失败，但TCP ping命令本身成功了
-                    result.setSuccess(true);
-                    result.setMessage("TCP连接成功，但无法解析详细数据");
-                    result.setAverageTime(0.0);
-                    result.setPacketLoss(0.0);
-                }
-            } else {
-                result.setSuccess(false);
-                result.setMessage(gostResult != null ? gostResult.getMsg() : "节点无响应");
-                result.setAverageTime(-1.0);
-                result.setPacketLoss(100.0);
-            }
-
-            return result;
+            return buildDiagnosisResult(node, targetIp, port, description, "tcp", gostResult, "TCP连接成功");
         } catch (Exception e) {
-            DiagnosisResult result = new DiagnosisResult();
-            result.setNodeId(node.getId());
-            result.setNodeName(node.getName());
-            result.setTargetIp(targetIp);
-            result.setTargetPort(port);
-            result.setDescription(description);
+            return buildExceptionDiagnosisResult(node, targetIp, port, description, "tcp", e);
+        }
+    }
+
+    /**
+     * 执行UDP探测诊断。
+     * UDP 无连接，这里的成功表示“收到响应”或“未收到明确拒绝”，结果仅用于可达性参考。
+     */
+    private DiagnosisResult performUdpPingDiagnosis(Node node, String targetIp, int port, String description) {
+        try {
+            JSONObject udpPingData = new JSONObject();
+            udpPingData.put("ip", targetIp);
+            udpPingData.put("port", port);
+            udpPingData.put("count", 1);
+            udpPingData.put("timeout", 2000);
+
+            GostDto gostResult = WebSocketServer.send_msg(node.getId(), udpPingData, "UdpPing");
+            return buildDiagnosisResult(node, targetIp, port, description, "udp", gostResult,
+                    "UDP探测完成，目标未显式拒绝");
+        } catch (Exception e) {
+            return buildExceptionDiagnosisResult(node, targetIp, port, description, "udp", e);
+        }
+    }
+
+    private DiagnosisResult buildDiagnosisResult(Node node, String targetIp, int port, String description,
+                                                 String protocol, GostDto gostResult, String defaultSuccessMessage) {
+        DiagnosisResult result = createDiagnosisResult(node, targetIp, port, description, protocol);
+
+        if (gostResult == null) {
             result.setSuccess(false);
-            result.setMessage("诊断执行异常: " + e.getMessage());
-            result.setTimestamp(System.currentTimeMillis());
+            result.setMessage("节点无响应");
             result.setAverageTime(-1.0);
             result.setPacketLoss(100.0);
             return result;
         }
+
+        if (!GOST_SUCCESS_MSG.equals(gostResult.getMsg())) {
+            result.setSuccess(false);
+            result.setMessage(gostResult.getMsg());
+            result.setAverageTime(-1.0);
+            result.setPacketLoss(100.0);
+            return result;
+        }
+
+        try {
+            if (gostResult.getData() != null) {
+                JSONObject pingResponse = (JSONObject) gostResult.getData();
+                boolean success = pingResponse.getBooleanValue("success");
+                result.setSuccess(success);
+                if (success) {
+                    String responseMessage = pingResponse.getString("message");
+                    result.setMessage(responseMessage == null || responseMessage.trim().isEmpty()
+                            ? defaultSuccessMessage
+                            : responseMessage);
+                    result.setAverageTime(pingResponse.getDoubleValue("averageTime"));
+                    result.setPacketLoss(pingResponse.getDoubleValue("packetLoss"));
+                } else {
+                    String errorMessage = pingResponse.getString("errorMessage");
+                    result.setMessage(errorMessage == null || errorMessage.trim().isEmpty()
+                            ? "探测失败"
+                            : errorMessage);
+                    result.setAverageTime(-1.0);
+                    result.setPacketLoss(100.0);
+                }
+            } else {
+                result.setSuccess(true);
+                result.setMessage(defaultSuccessMessage);
+                result.setAverageTime(0.0);
+                result.setPacketLoss(0.0);
+            }
+        } catch (Exception e) {
+            result.setSuccess(true);
+            result.setMessage(defaultSuccessMessage + "，但无法解析详细数据");
+            result.setAverageTime(0.0);
+            result.setPacketLoss(0.0);
+        }
+
+        return result;
+    }
+
+    private DiagnosisResult buildExceptionDiagnosisResult(Node node, String targetIp, int port, String description,
+                                                          String protocol, Exception e) {
+        DiagnosisResult result = createDiagnosisResult(node, targetIp, port, description, protocol);
+        result.setSuccess(false);
+        result.setMessage("诊断执行异常: " + e.getMessage());
+        result.setAverageTime(-1.0);
+        result.setPacketLoss(100.0);
+        return result;
+    }
+
+    private DiagnosisResult createDiagnosisResult(Node node, String targetIp, int port, String description, String protocol) {
+        DiagnosisResult result = new DiagnosisResult();
+        result.setNodeId(node.getId());
+        result.setNodeName(node.getName());
+        result.setTargetIp(targetIp);
+        result.setTargetPort(port);
+        result.setDescription(description);
+        result.setProtocol(protocol);
+        result.setTimestamp(System.currentTimeMillis());
+        return result;
     }
 
     /**
@@ -1502,6 +1543,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         private String targetIp;
         private Integer targetPort;
         private String description;
+        private String protocol;
         private boolean success;
         private String message;
         private double averageTime;

@@ -2,7 +2,7 @@
 
 > ⚠️ **维护声明**
 >
-> 本项目 Fork 自 [bqlpfy/flux-panel](https://github.com/bqlpfy/flux-panel)。原作者已暂停更新，此版本由 [@xiaoxinmm](https://github.com/xiaoxinmm) 继续更新维护。
+> 本项目 Fork 自 [bqlpfy/flux-panel](https://github.com/bqlpfy/flux-panel)。原作者已暂停更新，此版本由 [@Lochinemak](https://github.com/Lochinemak) 继续维护。
 >
 > 感谢原作者 [@bqlpfy](https://github.com/bqlpfy) 的开源精神 🙏
 
@@ -33,13 +33,13 @@
 面板端：
 
 ```bash
-curl -L https://raw.githubusercontent.com/xiaoxinmm/flux-panel-community/refs/heads/main/panel_install.sh -o panel_install.sh && chmod +x panel_install.sh && ./panel_install.sh
+curl -L https://raw.githubusercontent.com/Lochinemak/flux-panel-community/refs/heads/loch/dev/panel_install.sh -o panel_install.sh && chmod +x panel_install.sh && ./panel_install.sh
 ```
 
 节点端：
 
 ```bash
-curl -L https://raw.githubusercontent.com/xiaoxinmm/flux-panel-community/refs/heads/main/install.sh -o install.sh && chmod +x install.sh && ./install.sh
+curl -L https://raw.githubusercontent.com/Lochinemak/flux-panel-community/refs/heads/loch/dev/install.sh -o install.sh && chmod +x install.sh && ./install.sh
 ```
 
 #### 默认管理员账号
