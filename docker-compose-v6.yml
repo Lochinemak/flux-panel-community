@@ -21,7 +21,7 @@ services:
     networks:
       - gost-network
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
       timeout: 10s
       retries: 10
 
