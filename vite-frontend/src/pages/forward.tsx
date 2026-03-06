@@ -96,6 +96,7 @@ interface DiagnosisResult {
   results: Array<{
     success: boolean;
     description: string;
+    protocol?: string;
     nodeName: string;
     nodeId: string;
     targetIp: string;
@@ -2076,6 +2077,7 @@ export default function ForwardPage() {
                     <div className="space-y-4">
                       {diagnosisResult.results.map((result, index) => {
                         const quality = getQualityDisplay(result.averageTime, result.packetLoss);
+                        const isUdpResult = result.protocol === 'udp';
                         
                         return (
                           <Card key={index} className={`shadow-sm border ${result.success ? 'border-success' : 'border-danger'}`}>
@@ -2090,7 +2092,7 @@ export default function ForwardPage() {
                                       variant="flat" 
                                       size="sm"
                                     >
-                                      {result.success ? '连接成功' : '连接失败'}
+                                      {result.success ? (isUdpResult ? '探测通过' : '连接成功') : '连接失败'}
                                     </Chip>
                                   </div>
                                 </div>
@@ -2098,7 +2100,7 @@ export default function ForwardPage() {
                             </CardHeader>
                             
                             <CardBody className="pt-0">
-                              {result.success ? (
+                              {result.success && !isUdpResult ? (
                                 <div className="space-y-3">
                                   <div className="grid grid-cols-3 gap-4">
                                     <div className="text-center">
@@ -2126,6 +2128,14 @@ export default function ForwardPage() {
                                       {result.targetIp}{result.targetPort ? ':' + result.targetPort : ''}
                                     </code>
                                   </div>
+                                  {result.message && (
+                                    <Alert
+                                      color="primary"
+                                      variant="flat"
+                                      title="诊断说明"
+                                      description={result.message}
+                                    />
+                                  )}
                                 </div>
                               ) : (
                                 <div className="space-y-2">
@@ -2136,9 +2146,9 @@ export default function ForwardPage() {
                                     </code>
                                   </div>
                                   <Alert
-                                    color="danger"
+                                    color={result.success ? 'primary' : 'danger'}
                                     variant="flat"
-                                    title="错误详情"
+                                    title={result.success ? 'UDP探测说明' : '错误详情'}
                                     description={result.message}
                                   />
                                 </div>
