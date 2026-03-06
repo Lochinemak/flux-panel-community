@@ -258,3 +258,6 @@ doraemon.jks
 device.id
 commit.sh
 .ace-tool/
+
+
+.gocache/
